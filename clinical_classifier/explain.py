@@ -66,15 +66,17 @@ def explain_note(model, text, top_k=12, word_only=True):
     }
 
 
-def token_contributions(model, text):
-    """Map each unigram word -> its signed contribution to the predicted class.
+def token_contributions(model, text, target_class=None):
+    """Map each unigram word -> its signed contribution to a class.
 
-    Returns (prediction, proba_dict_sorted_desc, {word: contribution}). Bigram
-    and char features still affect the score but aren't returned (not word-level).
+    target_class: explain toward this class (e.g. the ensemble's pick). Defaults
+    to the TF-IDF model's own argmax. Returns (class, proba_dict_sorted_desc,
+    {word: contribution}). Bigram/char features still affect the score but aren't
+    returned (not word-level).
     """
     feats, clf, names, classes = _parts(model)
     proba = model.predict_proba([text])[0]
-    pred_i = int(np.argmax(proba))
+    pred_i = list(classes).index(target_class) if target_class is not None else int(np.argmax(proba))
     x = feats.transform([text]).toarray()[0]
     contrib = x * clf.coef_[pred_i]
     word = {}
@@ -98,12 +100,21 @@ def _shade(c, maxabs):
 REVIEW_THRESHOLD = 0.60  # below this top-class confidence -> route to a human
 
 
-def highlight_html(model, text):
-    """Return (pred, proba, contrib, highlighted_paragraph_html)."""
+def ensemble_proba(tfidf_proba, transformer_proba, w_tfidf=0.4):
+    """Weight-average two class->prob dicts. Returns dict sorted desc, normalized."""
+    classes = set(tfidf_proba) | set(transformer_proba)
+    blended = {c: w_tfidf * tfidf_proba.get(c, 0.0) + (1 - w_tfidf) * transformer_proba.get(c, 0.0)
+               for c in classes}
+    s = sum(blended.values()) or 1.0
+    return {c: v / s for c, v in sorted(blended.items(), key=lambda kv: -kv[1])}
+
+
+def highlight_html(model, text, target_class=None):
+    """Return (class, proba, contrib, highlighted_paragraph_html)."""
     import html
     import re
 
-    pred, proba, contrib = token_contributions(model, text)
+    pred, proba, contrib = token_contributions(model, text, target_class=target_class)
     maxabs = max((abs(v) for v in contrib.values()), default=1.0)
     out = []
     for tok in re.split(r"(\s+)", text):
@@ -129,21 +140,38 @@ def routing_badge(pred, conf, threshold=REVIEW_THRESHOLD):
             f'(top guess {pred}, only {conf:.0%} confidence — below {threshold:.0%})</span></div>')
 
 
-def render_html(model, text, threshold=REVIEW_THRESHOLD):
-    """Standalone HTML block: routing decision, confidence bars, highlighted note."""
-    pred, proba, _, body = highlight_html(model, text)
+def _render_block(pred, proba, body, threshold, subtitle=""):
+    """Shared HTML: routing decision, confidence bars, highlighted note."""
     conf = max(proba.values())
     bars = "".join(
         f'<div style="margin:2px 0;font-size:13px"><span style="display:inline-block;width:130px">{c}</span>'
         f'<span style="display:inline-block;height:12px;width:{int(p*240)}px;background:#2ea043;'
         f'vertical-align:middle"></span> {p:.0%}</div>' for c, p in proba.items())
+    sub = f'<div style="color:#777;font-size:12px;margin-bottom:6px">{subtitle}</div>' if subtitle else ""
     return (f'<div style="font-family:system-ui,sans-serif;max-width:820px;margin:16px 0">'
-            f'{routing_badge(pred, conf, threshold)}'
+            f'{sub}{routing_badge(pred, conf, threshold)}'
             f'<div style="color:#555;margin:12px 0">{bars}</div>'
             f'<p style="line-height:2;font-size:15px;background:#fff;padding:10px;'
             f'border:1px solid #eee;border-radius:6px">{body}</p>'
-            f'<p style="color:#999;font-size:12px">Green = supports the prediction, '
-            f'red = argues against. Hover a word for its exact weight.</p></div>')
+            f'<p style="color:#999;font-size:12px">Green/red = the TF-IDF component\'s word '
+            f'evidence for the predicted class. Hover a word for its exact weight.</p></div>')
+
+
+def render_html(model, text, threshold=REVIEW_THRESHOLD):
+    """TF-IDF-only block."""
+    pred, proba, _, body = highlight_html(model, text)
+    return _render_block(pred, proba, body, threshold)
+
+
+def render_html_ensemble(model, text, transformer_proba, w_tfidf=0.4, threshold=REVIEW_THRESHOLD):
+    """Ensemble block: decision/confidence from the blend, word evidence from TF-IDF."""
+    _, tfidf_proba, _ = token_contributions(model, text)
+    blended = ensemble_proba(tfidf_proba, transformer_proba, w_tfidf)
+    pred = next(iter(blended))                       # argmax (dict is sorted desc)
+    _, _, _, body = highlight_html(model, text, target_class=pred)
+    sub = (f"Ensemble: {int(w_tfidf*100)}% TF-IDF + {int((1-w_tfidf)*100)}% transformer "
+           f"(decision + confidence); word evidence from the TF-IDF component")
+    return _render_block(pred, blended, body, threshold, subtitle=sub)
 
 
 def main():
