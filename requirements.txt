@@ -12,3 +12,7 @@ numpy>=1.24
 PyYAML>=6.0
 sentencepiece          # required by DeBERTa-v3 tokenizer
 pytest>=7.4            # tests
+
+# Data cleaning (from sumit-dev: data_cleaning.py)
+nltk                   # stopwords / stemming
+kagglehub              # dataset download

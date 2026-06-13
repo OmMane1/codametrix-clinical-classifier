@@ -1,9 +1,28 @@
 """Tests for parsing and fold assignment — the highest-risk logic."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from encoder.data import add_stratified_folds, load_training_data, parse_case_file
+from encoder.data import (
+    add_stratified_folds,
+    compute_class_weights,
+    load_clean_csv,
+    load_training_data,
+    parse_case_file,
+)
+
+
+def _write_clean_csv(path, labels, texts=None):
+    """Helper: write a minimal cleaned-CSV with the columns the loader needs."""
+    texts = texts or [f"abstract number {i}" for i in range(len(labels))]
+    pd.DataFrame(
+        {
+            "encoder_text": texts,
+            "hackathon_label": labels,
+            "extra_column": range(len(labels)),  # should be ignored
+        }
+    ).to_csv(path, index=False)
 
 
 # --- training corpus loader -------------------------------------------------
@@ -128,3 +147,69 @@ def test_add_stratified_folds_is_deterministic():
     b = add_stratified_folds(df, n_folds=5, seed=42)
 
     assert list(a["fold"]) == list(b["fold"])
+
+
+# --- cleaned-CSV loader (the encoder's primary input) -----------------------
+
+def test_load_clean_csv_selects_encoder_columns(tmp_path):
+    f = tmp_path / "clean.csv"
+    _write_clean_csv(f, labels=[0, 1, 3, 4])
+
+    df = load_clean_csv(f)
+
+    assert list(df.columns) == ["encoder_text", "hackathon_label"]
+    assert len(df) == 4
+    assert set(df["hackathon_label"]) == {0, 1, 3, 4}
+
+
+def test_load_clean_csv_drops_duplicate_text(tmp_path):
+    f = tmp_path / "clean.csv"
+    _write_clean_csv(f, labels=[0, 0, 1], texts=["same note", "same note", "other note"])
+
+    df = load_clean_csv(f, drop_duplicate_text=True)
+
+    assert len(df) == 2  # one duplicate removed
+
+
+def test_load_clean_csv_drops_empty_text(tmp_path):
+    f = tmp_path / "clean.csv"
+    _write_clean_csv(f, labels=[0, 1], texts=["real text", "   "])
+
+    df = load_clean_csv(f, min_text_chars=1)
+
+    assert len(df) == 1
+    assert df.loc[0, "encoder_text"] == "real text"
+
+
+def test_load_clean_csv_rejects_out_of_range_label(tmp_path):
+    f = tmp_path / "clean.csv"
+    _write_clean_csv(f, labels=[0, 7])  # 7 is outside 0..4
+
+    with pytest.raises(ValueError, match="outside 0..4"):
+        load_clean_csv(f, num_labels=5)
+
+
+def test_load_clean_csv_missing_column_raises(tmp_path):
+    f = tmp_path / "clean.csv"
+    pd.DataFrame({"encoder_text": ["a"], "wrong_label": [0]}).to_csv(f, index=False)
+
+    with pytest.raises(KeyError, match="hackathon_label"):
+        load_clean_csv(f)
+
+
+# --- class weights ----------------------------------------------------------
+
+def test_compute_class_weights_balances_present_classes():
+    # counts: class0=2, class1=1, classes 2/3/4 absent.
+    weights = compute_class_weights([0, 0, 1], num_labels=5)
+
+    # balanced over the 2 present classes: n / (k * count)
+    assert weights[0] == pytest.approx(3 / (2 * 2))  # 0.75
+    assert weights[1] == pytest.approx(3 / (2 * 1))  # 1.5
+    # absent classes default to 1.0 (and never break the computation)
+    assert weights[2] == 1.0 and weights[3] == 1.0 and weights[4] == 1.0
+
+
+def test_compute_class_weights_uniform_when_balanced():
+    weights = compute_class_weights([0, 1, 2, 3], num_labels=4)
+    assert np.allclose(weights, 1.0)

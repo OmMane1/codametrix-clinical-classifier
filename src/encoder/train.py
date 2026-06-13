@@ -27,7 +27,12 @@ import numpy as np
 import pandas as pd
 
 from .config import EncoderConfig
-from .data import add_stratified_folds, load_training_data
+from .data import (
+    add_stratified_folds,
+    compute_class_weights,
+    load_clean_csv,
+    load_training_data,
+)
 from .metrics import (
     classification_scores,
     compute_metrics_for_trainer,
@@ -67,6 +72,8 @@ def train_cv(
     """
     # Imports are local so that unit tests importing this module do not require
     # torch/transformers to be installed.
+    import torch
+    from torch import nn
     from transformers import (
         AutoTokenizer,
         DataCollatorWithPadding,
@@ -75,16 +82,60 @@ def train_cv(
         TrainingArguments,
     )
 
-    df = load_training_data(
-        config.train_path,
-        text_column=config.text_column,
-        label_column=config.label_column,
-        cleaner=cleaner,
-    )
+    class WeightedTrainer(Trainer):
+        """Trainer with an optional class-weighted cross-entropy loss.
+
+        ``class_weights`` is a 1-D tensor of length ``num_labels`` placed on the
+        model's device at loss time. ``**kwargs`` absorbs version differences in
+        the ``compute_loss`` signature (e.g. ``num_items_in_batch``).
+        """
+
+        def __init__(self, *args, class_weights=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._class_weights = class_weights
+
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            labels = inputs.pop("labels")
+            outputs = model(**inputs)
+            logits = outputs.logits
+            weight = (
+                self._class_weights.to(logits.device)
+                if self._class_weights is not None
+                else None
+            )
+            loss = nn.functional.cross_entropy(logits, labels, weight=weight)
+            return (loss, outputs) if return_outputs else loss
+
+    if config.data_format == "csv":
+        df = load_clean_csv(
+            config.data_path,
+            text_column=config.text_column,
+            label_column=config.label_column,
+            num_labels=config.num_labels,
+            drop_duplicate_text=config.drop_duplicate_text,
+            min_text_chars=config.min_text_chars,
+            cleaner=cleaner,
+        )
+    else:
+        df = load_training_data(
+            config.data_path,
+            text_column=config.text_column,
+            label_column=config.label_column,
+            cleaner=cleaner,
+        )
     df = add_stratified_folds(
         df, label_column=config.label_column, n_folds=config.n_folds, seed=config.seed
     )
-    logger.info("Loaded %d rows; class counts:\n%s", len(df), df[config.label_column].value_counts().sort_index())
+    class_counts = df[config.label_column].value_counts().sort_index()
+    logger.info("Loaded %d rows; class counts:\n%s", len(df), class_counts)
+    absent = [i for i in range(config.num_labels) if i not in class_counts.index]
+    if absent:
+        logger.warning(
+            "No training rows for class(es) %s (%s). The 5-way head is kept for "
+            "the hidden test, but these classes cannot be learned from this data.",
+            absent,
+            [config.label_names[i] for i in absent],
+        )
 
     oof_dir = Path(config.oof_dir)
     oof_dir.mkdir(parents=True, exist_ok=True)
@@ -136,7 +187,15 @@ def train_cv(
             seed=config.seed,
         )
 
-        trainer = Trainer(
+        class_weights = None
+        if config.class_weighted_loss:
+            weights = compute_class_weights(
+                train_df[config.label_column].to_numpy(), config.num_labels
+            )
+            class_weights = torch.tensor(weights, dtype=torch.float)
+            logger.info("Fold %d class weights: %s", fold, weights.round(3).tolist())
+
+        trainer = WeightedTrainer(
             model=model,
             args=args,
             train_dataset=train_ds,
@@ -145,6 +204,7 @@ def train_cv(
             data_collator=collator,
             compute_metrics=compute_metrics_for_trainer,
             callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+            class_weights=class_weights,
         )
 
         trainer.train()

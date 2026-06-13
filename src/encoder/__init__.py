@@ -15,15 +15,23 @@ Public API:
 """
 
 from .config import DEFAULT_LABEL_NAMES, EncoderConfig
-from .data import add_stratified_folds, load_training_data, parse_case_file
+from .data import (
+    add_stratified_folds,
+    compute_class_weights,
+    load_clean_csv,
+    load_training_data,
+    parse_case_file,
+)
 from .metrics import classification_scores, per_class_f1, softmax
 
 __all__ = [
     "EncoderConfig",
     "DEFAULT_LABEL_NAMES",
+    "load_clean_csv",
     "load_training_data",
     "parse_case_file",
     "add_stratified_folds",
+    "compute_class_weights",
     "classification_scores",
     "per_class_f1",
     "softmax",

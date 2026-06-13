@@ -29,17 +29,23 @@ def _load_config(args: argparse.Namespace) -> EncoderConfig:
 
 
 def _maybe_cleaner(use_cleaner: bool):
-    """Optionally wire in the teammate's text cleaner from data_cleaning.py."""
+    """Optionally wire in the teammate's encoder cleaner from data_cleaning.py.
+
+    We use ``clean_for_encoder`` (the same minimal normalisation used to build
+    the ``encoder_text`` column) so the hidden-test text is processed exactly
+    like the training text. The training CSV is already cleaned, so this mainly
+    matters for ``predict`` on the raw ``Case N`` file.
+    """
     if not use_cleaner:
         return None
     try:
         # data_cleaning.py lives at the repo root.
-        from data_cleaning import clean_medical_text  # type: ignore
+        from data_cleaning import clean_for_encoder  # type: ignore
 
-        return clean_medical_text
+        return clean_for_encoder
     except Exception as exc:  # pragma: no cover
         logging.getLogger(__name__).warning(
-            "Could not import clean_medical_text (%s); proceeding without cleaning.", exc
+            "Could not import clean_for_encoder (%s); proceeding without cleaning.", exc
         )
         return None
 
@@ -57,7 +63,7 @@ def main(argv: Optional[list] = None) -> int:
     common.add_argument(
         "--use-cleaner",
         action="store_true",
-        help="Apply data_cleaning.clean_medical_text to text.",
+        help="Apply data_cleaning.clean_for_encoder to text (matches encoder_text).",
     )
 
     p_train = sub.add_parser("train", parents=[common], help="Cross-validated training.")
@@ -70,9 +76,14 @@ def main(argv: Optional[list] = None) -> int:
     p_pred = sub.add_parser("predict", parents=[common], help="Predict on a test file.")
     p_pred.add_argument("--test-path", required=True, help="Path to the Case N test file.")
     p_pred.add_argument(
-        "--zero-based",
+        "--label-ids",
         action="store_true",
-        help="Emit 0-based label ids instead of the default 1-based.",
+        help="Emit numeric hackathon_label as the prediction instead of the class name.",
+    )
+    p_pred.add_argument(
+        "--one-based",
+        action="store_true",
+        help="With --label-ids, emit 1-based ids instead of 0-based.",
     )
 
     args = parser.parse_args(argv)
@@ -93,7 +104,8 @@ def main(argv: Optional[list] = None) -> int:
             config,
             test_path=args.test_path,
             cleaner=cleaner,
-            one_based_output=not args.zero_based,
+            one_based_output=args.one_based,
+            label_as_id=args.label_ids,
         )
         print(submission.head())
         print(f"{len(submission)} predictions written.")

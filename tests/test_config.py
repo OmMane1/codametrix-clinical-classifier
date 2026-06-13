@@ -12,9 +12,22 @@ def test_default_config_has_five_consistent_labels():
     assert cfg.label_names == DEFAULT_LABEL_NAMES
 
 
+def test_default_labels_are_hackathon_space():
+    cfg = EncoderConfig()
+    assert cfg.label_names[0] == "cardiology"
+    assert cfg.label_names[2] == "orthopedics"  # empty class, still in the head
+    assert cfg.label_names[4] == "other"
+    assert cfg.label2id["gastroenterology"] == 3
+
+
 def test_config_rejects_label_count_mismatch():
     with pytest.raises(ValueError, match="num_labels"):
         EncoderConfig(num_labels=4)  # but 5 label names -> inconsistent
+
+
+def test_config_rejects_bad_data_format():
+    with pytest.raises(ValueError, match="data_format"):
+        EncoderConfig(data_format="parquet")
 
 
 def test_id_label_maps_are_inverses():

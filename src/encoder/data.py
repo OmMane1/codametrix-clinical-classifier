@@ -29,6 +29,7 @@ import re
 from pathlib import Path
 from typing import Callable, List, Optional
 
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 
@@ -96,6 +97,92 @@ def load_training_data(
 
     df[label_column] = df["raw_label"] - 1  # 0-based for the model
     return df.reset_index(drop=True)
+
+
+def load_clean_csv(
+    path: str | Path,
+    text_column: str = "encoder_text",
+    label_column: str = "hackathon_label",
+    num_labels: int = 5,
+    drop_duplicate_text: bool = True,
+    min_text_chars: int = 1,
+    cleaner: Optional[Callable[[str], str]] = None,
+) -> pd.DataFrame:
+    """Load the cleaned CSV produced by ``data_cleaning.py``.
+
+    This is the encoder's primary input. It uses the ``encoder_text`` column
+    (lightly normalised, casing/digits/punctuation preserved — best for a
+    transformer) and the ``hackathon_label`` column (the remapped 0..4 class
+    space), exactly as recommended in ``data-cleaning-notes.md``.
+
+    Steps: select the two columns, drop empty/near-empty text, validate the
+    label range, and (optionally) drop duplicate texts so the same note cannot
+    leak across CV folds.
+
+    Returns a DataFrame with columns ``[text_column, label_column]``.
+    """
+    cleaner = cleaner or _identity
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Cleaned CSV not found: {path}")
+
+    df = pd.read_csv(path)
+    missing = {text_column, label_column} - set(df.columns)
+    if missing:
+        raise KeyError(
+            f"{path} is missing required column(s) {sorted(missing)}. "
+            f"Available: {sorted(df.columns)}"
+        )
+
+    df = df[[text_column, label_column]].copy()
+    df[text_column] = df[text_column].fillna("").astype(str).map(cleaner).str.strip()
+
+    before = len(df)
+    df = df[df[text_column].str.len() >= min_text_chars]
+    if len(df) < before:
+        # Empty rows are dropped silently here but reported by the caller via
+        # the row count; flag if it is surprising.
+        pass
+
+    try:
+        df[label_column] = df[label_column].astype(int)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{path}: {label_column} is not integer-coercible.") from exc
+
+    bad = df.loc[
+        (df[label_column] < 0) | (df[label_column] >= num_labels), label_column
+    ].unique()
+    if len(bad):
+        raise ValueError(
+            f"{path}: {label_column} has values outside 0..{num_labels - 1}: "
+            f"{sorted(bad)}"
+        )
+
+    if drop_duplicate_text:
+        df = df.drop_duplicates(subset=text_column)
+
+    if df.empty:
+        raise ValueError(f"No usable rows after filtering {path}")
+    return df.reset_index(drop=True)
+
+
+def compute_class_weights(labels, num_labels: int) -> np.ndarray:
+    """Inverse-frequency ("balanced") class weights over *present* classes.
+
+    Matches sklearn's ``class_weight="balanced"`` for classes that appear, and
+    assigns weight ``1.0`` to absent classes (e.g. ``orthopedics``, which has no
+    training rows in this corpus) so they neither break the computation nor
+    distort the loss. Pure NumPy — no torch — so it is unit-testable.
+    """
+    labels = np.asarray(labels)
+    counts = np.bincount(labels, minlength=num_labels).astype(np.float64)
+    weights = np.ones(num_labels, dtype=np.float64)
+    present = counts > 0
+    n_present_classes = int(present.sum())
+    n_samples = counts[present].sum()
+    if n_present_classes > 0:
+        weights[present] = n_samples / (n_present_classes * counts[present])
+    return weights
 
 
 def parse_case_file(

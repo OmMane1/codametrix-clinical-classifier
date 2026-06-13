@@ -6,13 +6,29 @@ reproducible and makes the CLI a thin wrapper around a config file.
 
 Defaults are tuned for a 4 GB GPU (e.g. GTX 1650): small batch + gradient
 accumulation + fp16 + layer freezing. Override anything via a YAML file.
+
+Label space
+-----------
+We classify into the *hackathon* class space, not the raw Kaggle disease
+categories. The data-cleaning step (``data_cleaning.py``) maps the source
+conditions into these five classes and writes a ``hackathon_label`` column:
+
+    0 cardiology        (<- cardiovascular diseases)
+    1 neurology         (<- nervous system diseases)
+    2 orthopedics       (no source rows -> EMPTY in training data)
+    3 gastroenterology  (<- digestive system diseases)
+    4 other             (<- neoplasms + general pathological conditions)
+
+Note ``orthopedics`` has no training examples in this corpus. We still keep a
+5-way head (the hidden test may contain it), but the model cannot learn it from
+this data alone.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 try:
     import yaml
@@ -20,16 +36,13 @@ except ImportError:  # pragma: no cover - yaml is a declared dependency
     yaml = None
 
 
-# Canonical label set for the Kaggle "medical-text" (Medical Abstracts) corpus.
-# The raw .dat files use 1-based labels; we store them 0-indexed internally.
-# NOTE: we keep ALL FIVE classes. Class 5 must not be dropped (the hidden test
-# spans every class).
+# Canonical hackathon label order (index == hackathon_label value).
 DEFAULT_LABEL_NAMES: List[str] = [
-    "neoplasms",                      # raw label 1 -> index 0
-    "digestive_system_diseases",      # raw label 2 -> index 1
-    "nervous_system_diseases",        # raw label 3 -> index 2
-    "cardiovascular_diseases",        # raw label 4 -> index 3
-    "general_pathological_conditions",  # raw label 5 -> index 4
+    "cardiology",        # 0
+    "neurology",         # 1
+    "orthopedics",       # 2  (empty in training data)
+    "gastroenterology",  # 3
+    "other",             # 4
 ]
 
 
@@ -59,6 +72,9 @@ class EncoderConfig:
     gradient_accumulation_steps: int = 2  # effective batch = 8 * 2 = 16
     fp16: bool = True
     lr_scheduler_type: str = "linear"
+    # Inverse-frequency class weights in the loss. "other" dominates this
+    # corpus, so balancing protects the minority classes / macro-F1.
+    class_weighted_loss: bool = True
 
     # --- Cross-validation ---
     n_folds: int = 5
@@ -68,9 +84,14 @@ class EncoderConfig:
     single_fold: bool = False
 
     # --- Data ---
-    train_path: str = "data/raw/train.dat"
-    text_column: str = "text"
-    label_column: str = "label"
+    # Primary input is the cleaned CSV produced by data_cleaning.py. Set
+    # data_format="dat" to read a raw tab-separated train.dat instead.
+    data_path: str = "clean_medical_text.csv"
+    data_format: str = "csv"  # "csv" | "dat"
+    text_column: str = "encoder_text"   # cased, lightly-normalised text
+    label_column: str = "hackathon_label"
+    drop_duplicate_text: bool = True     # avoid dup notes leaking across folds
+    min_text_chars: int = 1              # drop empty/near-empty rows
 
     # --- Outputs ---
     output_dir: str = "artifacts/models"
@@ -91,6 +112,8 @@ class EncoderConfig:
                 f"({len(self.label_names)}). Keep them consistent — do not drop "
                 "a class silently."
             )
+        if self.data_format not in {"csv", "dat"}:
+            raise ValueError(f"data_format must be 'csv' or 'dat', got {self.data_format!r}")
 
     # --- (de)serialisation -------------------------------------------------
     @classmethod

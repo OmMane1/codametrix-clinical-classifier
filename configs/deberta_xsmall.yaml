@@ -4,11 +4,11 @@
 model_name: microsoft/deberta-v3-xsmall
 num_labels: 5
 label_names:
-  - neoplasms
-  - digestive_system_diseases
-  - nervous_system_diseases
-  - cardiovascular_diseases
-  - general_pathological_conditions
+  - cardiology
+  - neurology
+  - orthopedics
+  - gastroenterology
+  - other
 max_length: 256
 
 hidden_dropout_prob: 0.1
@@ -25,14 +25,18 @@ eval_batch_size: 32
 gradient_accumulation_steps: 1
 fp16: true
 lr_scheduler_type: linear
+class_weighted_loss: true
 
 n_folds: 5
 seed: 2024
 single_fold: false
 
-train_path: data/raw/train.dat
-text_column: text
-label_column: label
+data_path: clean_medical_text.csv
+data_format: csv
+text_column: encoder_text
+label_column: hackathon_label
+drop_duplicate_text: true
+min_text_chars: 1
 
 output_dir: artifacts/models
 oof_dir: artifacts/oof
