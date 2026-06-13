@@ -200,7 +200,7 @@ def train_cv(
             args=args,
             train_dataset=train_ds,
             eval_dataset=valid_ds,
-            tokenizer=tokenizer,
+            processing_class=tokenizer,  # transformers>=4.46 (was `tokenizer=`)
             data_collator=collator,
             compute_metrics=compute_metrics_for_trainer,
             callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],

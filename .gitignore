@@ -30,3 +30,11 @@ Thumbs.db
 .ipynb_checkpoints/
 data/raw/
 *.ckpt
+
+# Training artifacts (large model checkpoints; don't commit)
+artifacts/models/
+artifacts/**/checkpoint-*/
+# OOF probs / submissions / test probs are small deliverables — keep them if
+# you want to share via git, otherwise uncomment to ignore:
+# artifacts/oof/
+# artifacts/submissions/

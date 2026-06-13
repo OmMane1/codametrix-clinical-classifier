@@ -11,7 +11,9 @@ label_names:
   - orthopedics
   - gastroenterology
   - other
-max_length: 256
+# 128 (not 256) to fit ~1hr full CV on a 4GB GTX 1650; transcriptions are long
+# but specialty signal is usually up front. Bump back to 256 for a final run.
+max_length: 128
 
 hidden_dropout_prob: 0.1
 attention_dropout_prob: 0.1
@@ -21,7 +23,7 @@ freeze_layers: 2
 learning_rate: 2.0e-5
 weight_decay: 0.01
 warmup_ratio: 0.1
-epochs: 3.0
+epochs: 2.0
 train_batch_size: 8
 eval_batch_size: 16
 gradient_accumulation_steps: 2
