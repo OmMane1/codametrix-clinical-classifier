@@ -2,7 +2,6 @@ import re
 import pandas as pd
 import nltk
 from nltk.corpus import stopwords
-from nltk.stem import SnowballStemmer
 
 # Download once if needed
 try:
@@ -11,7 +10,34 @@ except LookupError:
     nltk.download("stopwords")
     stop_words = set(stopwords.words("english"))
 
-stemmer = SnowballStemmer("english")  # Imported in notebook, but not actually used there
+
+DEFAULT_COLUMNS = {
+    0: "conditions",
+    1: "full_text",
+}
+
+
+def normalize_whitespace(text: str) -> str:
+    """Convert missing values to empty strings and normalize whitespace."""
+
+    if pd.isna(text):
+        return ""
+
+    text = str(text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def clean_for_encoder(text: str) -> str:
+    """
+    Minimal cleaning for clinical encoders such as BioClinicalBERT.
+
+    Keep casing, digits, punctuation, stopwords, and negations because they can
+    carry clinical meaning: ages, dosages, lab values, anatomy levels, and
+    phrases such as "no chest pain".
+    """
+
+    return normalize_whitespace(text)
 
 
 def remove_stopwords(text: str) -> str:
@@ -30,81 +56,98 @@ def remove_stopwords(text: str) -> str:
     return " ".join(tokens)
 
 
-def clean_medical_text(text: str) -> str:
+def clean_for_classical_model(
+    text: str,
+    *,
+    remove_digits: bool = False,
+    remove_stop_words: bool = False,
+) -> str:
     """
-    Extracted from notebook's dataPreprocessing(x) function.
-    Flow:
-    1. lowercase
-    2. normalize whitespace
-    3. remove digits
-    4. normalize repeated periods
-    5. normalize repeated commas
-    6. remove stopwords
-    7. strip leading/trailing whitespace
+    Conservative cleaning for TF-IDF / classical models.
+
+    Defaults preserve digits and stopwords because both can be predictive in
+    clinical text. Use the keyword arguments only for experiments where CV shows
+    they help.
     """
 
-    if pd.isna(text):
-        return ""
+    text = normalize_whitespace(text).lower()
 
-    text = str(text)
+    if remove_digits:
+        text = re.sub(r"\d+", " ", text)
+        text = re.sub(r"\(\s*\)", " ", text)
 
-    # 1. lowercase
-    text = text.lower()
-
-    # 2. normalize whitespace
-    text = re.sub(r"\s+", " ", text)
-
-    # 3. remove digits
-    text = re.sub(r"\d+", "", text)
-
-    # 4. notebook had: re.sub('\(d+', '', x)
-    # That line likely has a typo and does not do much useful cleaning.
-    # If you want to remove things like "(123)", use this:
-    text = re.sub(r"\(\d+\)", "", text)
-
-    # 5. normalize repeated periods and commas
     text = re.sub(r"\.+", ".", text)
     text = re.sub(r",+", ",", text)
+    text = re.sub(r"\s+", " ", text)
 
-    # 6. remove stopwords
-    text = remove_stopwords(text)
+    if remove_stop_words:
+        text = remove_stopwords(text)
 
-    # 7. strip
-    text = text.strip()
-
-    return text
+    return text.strip()
 
 
-def prepare_medical_dataframe(path: str) -> pd.DataFrame:
+def clean_medical_text(text: str) -> str:
     """
-    Reconstructs the dataframe setup from the notebook:
+    Backward-compatible alias for older notebook code.
+
+    New code should prefer either:
+    - clean_for_encoder for transformer models
+    - clean_for_classical_model for TF-IDF / linear models
+    """
+
+    return clean_for_classical_model(text)
+
+
+def prepare_medical_dataframe(
+    path: str,
+    *,
+    drop_conditions: set[int] | None = None,
+    label_offset: int = 1,
+) -> pd.DataFrame:
+    """
+    Load the medical text dataset and create model-ready text columns.
+
     - read train.dat
     - rename columns
     - create essay_id
-    - remove condition 5
     - create zero-indexed label
-    - clean full_text
+    - create encoder_text for clinical encoders
+    - create clean_text for classical models
+
+    By default, no conditions are dropped. The old notebook removed condition 5,
+    but that is unsafe for a five-class challenge unless condition 5 is proven to
+    be out of scope or invalid.
     """
 
     df = pd.read_csv(path, sep="\t", header=None)
 
-    df.rename(
-        columns={
-            0: "conditions",
-            1: "full_text"
-        },
-        inplace=True
-    )
+    df.rename(columns=DEFAULT_COLUMNS, inplace=True)
+    df = df.dropna(subset=["conditions", "full_text"]).copy()
+    df["conditions"] = df["conditions"].astype(int)
 
     df["essay_id"] = df.index.map(lambda x: f"000{x}")
 
-    # Notebook removes condition 5
-    df = df[df["conditions"] != 5].reset_index(drop=True)
+    if drop_conditions:
+        df = df[~df["conditions"].isin(drop_conditions)].reset_index(drop=True)
 
-    # Notebook converts labels from 1-based to 0-based
-    df["label"] = df["conditions"] - 1
+    df["label"] = df["conditions"] - label_offset
 
-    # Apply cleaning
-    df["clean_text"] = df["full_text"].apply(clean_medical_text)
+    df["raw_text"] = df["full_text"].astype(str)
+    df["encoder_text"] = df["full_text"].apply(clean_for_encoder)
+    df["clean_text"] = df["full_text"].apply(clean_for_classical_model)
+    df["text_length"] = df["encoder_text"].str.len()
+    df["token_count"] = df["encoder_text"].str.split().str.len()
 
     return df
+
+
+def summarize_medical_dataframe(df: pd.DataFrame) -> dict:
+    """Return quick checks to decide whether any label should be dropped."""
+
+    return {
+        "rows": len(df),
+        "conditions": df["conditions"].value_counts().sort_index().to_dict(),
+        "labels": df["label"].value_counts().sort_index().to_dict(),
+        "empty_encoder_text": int((df["encoder_text"] == "").sum()),
+        "duplicate_text_rows": int(df.duplicated("encoder_text").sum()),
+    }
