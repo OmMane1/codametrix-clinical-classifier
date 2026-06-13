@@ -1,3 +1,5 @@
+import argparse
+from pathlib import Path
 import re
 import pandas as pd
 import nltk
@@ -15,6 +17,8 @@ DEFAULT_COLUMNS = {
     0: "conditions",
     1: "full_text",
 }
+
+DEFAULT_KAGGLE_DATASET = "chaitanyakck/medical-text"
 
 
 def normalize_whitespace(text: str) -> str:
@@ -151,3 +155,108 @@ def summarize_medical_dataframe(df: pd.DataFrame) -> dict:
         "empty_encoder_text": int((df["encoder_text"] == "").sum()),
         "duplicate_text_rows": int(df.duplicated("encoder_text").sum()),
     }
+
+
+def download_medical_dataset(dataset: str = DEFAULT_KAGGLE_DATASET) -> Path:
+    """Download the Kaggle dataset with kagglehub and return its local path."""
+
+    try:
+        import kagglehub
+    except ImportError as exc:
+        raise ImportError(
+            "kagglehub is required for automatic download. "
+            "Install it with: pip install kagglehub"
+        ) from exc
+
+    return Path(kagglehub.dataset_download(dataset))
+
+
+def find_train_file(dataset_dir: str | Path, filename: str = "train.dat") -> Path:
+    """Find train.dat inside the downloaded dataset directory."""
+
+    dataset_dir = Path(dataset_dir)
+    direct_path = dataset_dir / filename
+
+    if direct_path.exists():
+        return direct_path
+
+    matches = sorted(dataset_dir.rglob(filename))
+
+    if not matches:
+        raise FileNotFoundError(
+            f"Could not find {filename!r} inside {dataset_dir}. "
+            "Pass the file directly with --input if it has a different name."
+        )
+
+    return matches[0]
+
+
+def parse_drop_conditions(values: list[str] | None) -> set[int] | None:
+    """Parse optional CLI label exclusions."""
+
+    if not values:
+        return None
+
+    return {int(value) for value in values}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Download and clean the medical text classification dataset."
+    )
+    parser.add_argument(
+        "--input",
+        type=Path,
+        help="Path to train.dat. If omitted, the Kaggle dataset is downloaded.",
+    )
+    parser.add_argument(
+        "--dataset",
+        default=DEFAULT_KAGGLE_DATASET,
+        help=f"KaggleHub dataset id. Default: {DEFAULT_KAGGLE_DATASET}",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("clean_medical_text.csv"),
+        help="Output CSV path. Default: clean_medical_text.csv",
+    )
+    parser.add_argument(
+        "--drop-condition",
+        action="append",
+        dest="drop_conditions",
+        help="Condition label to drop. Can be repeated. Default: keep all labels.",
+    )
+    parser.add_argument(
+        "--label-offset",
+        type=int,
+        default=1,
+        help="Value subtracted from source labels to create zero-indexed labels.",
+    )
+
+    args = parser.parse_args()
+
+    if args.input:
+        train_path = args.input
+        print(f"Using input file: {train_path}")
+    else:
+        dataset_dir = download_medical_dataset(args.dataset)
+        train_path = find_train_file(dataset_dir)
+        print(f"Downloaded dataset to: {dataset_dir}")
+        print(f"Using training file: {train_path}")
+
+    df = prepare_medical_dataframe(
+        train_path,
+        drop_conditions=parse_drop_conditions(args.drop_conditions),
+        label_offset=args.label_offset,
+    )
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(args.output, index=False)
+
+    print(f"Wrote cleaned dataset to: {args.output}")
+    print("Summary:")
+    print(summarize_medical_dataframe(df))
+
+
+if __name__ == "__main__":
+    main()
