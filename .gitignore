@@ -2,3 +2,6 @@ __pycache__/*
 __pycache__/
 *.pyc
 .venv/
+runs/
+*.npy
+clean_medical_text.csv
