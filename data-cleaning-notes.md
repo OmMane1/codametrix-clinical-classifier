@@ -35,11 +35,42 @@ The cleaning script creates these model-ready columns:
 |---|---|
 | `essay_id` | Stable row identifier based on the original row index |
 | `label` | Zero-indexed label created from `conditions - label_offset` |
+| `hackathon_classification` | Strictly mapped hackathon class name |
+| `hackathon_label` | Numeric hackathon label using the challenge class order |
 | `raw_text` | Original text converted to string |
 | `encoder_text` | Lightly normalized text for clinical encoders |
 | `clean_text` | Conservative lowercase text for classical models |
 | `text_length` | Character length of `encoder_text` |
 | `token_count` | Whitespace token count of `encoder_text` |
+
+## Hackathon Class Mapping
+
+The Kaggle dataset classes do not exactly match the hackathon classes. The
+pipeline therefore creates a strict rule-based mapping into the hackathon label
+space:
+
+| Source `conditions` | Source meaning | `hackathon_classification` | `hackathon_label` |
+|---:|---|---|---:|
+| `1` | Neoplasms | `other` | `4` |
+| `2` | Digestive system diseases | `gastroenterology` | `3` |
+| `3` | Nervous system diseases | `neurology` | `1` |
+| `4` | Cardiovascular diseases | `cardiology` | `0` |
+| `5` | General pathological conditions | `other` | `4` |
+
+The challenge class order is:
+
+| `hackathon_label` | Class |
+|---:|---|
+| `0` | Cardiology |
+| `1` | Neurology |
+| `2` | Orthopedics |
+| `3` | Gastroenterology |
+| `4` | Other |
+
+There are currently no source rows mapped to `orthopedics`, so that class is
+present in the label space but empty in this cleaned dataset. Models trained
+only on this data should not be expected to learn orthopedics without additional
+orthopedic examples.
 
 ## Encoder Cleaning
 
@@ -185,7 +216,7 @@ For the clinical encoder:
 ```python
 df = prepare_medical_dataframe("train.dat")
 texts = df["encoder_text"]
-labels = df["label"]
+labels = df["hackathon_label"]
 ```
 
 For TF-IDF or linear models:
@@ -193,7 +224,7 @@ For TF-IDF or linear models:
 ```python
 df = prepare_medical_dataframe("train.dat")
 texts = df["clean_text"]
-labels = df["label"]
+labels = df["hackathon_label"]
 ```
 
 For experiments that intentionally exclude a condition:

@@ -20,6 +20,22 @@ DEFAULT_COLUMNS = {
 
 DEFAULT_KAGGLE_DATASET = "chaitanyakck/medical-text"
 
+HACKATHON_CLASS_TO_LABEL = {
+    "cardiology": 0,
+    "neurology": 1,
+    "orthopedics": 2,
+    "gastroenterology": 3,
+    "other": 4,
+}
+
+SOURCE_CONDITION_TO_HACKATHON_CLASS = {
+    1: "other",  # Neoplasms
+    2: "gastroenterology",  # Digestive system diseases
+    3: "neurology",  # Nervous system diseases
+    4: "cardiology",  # Cardiovascular diseases
+    5: "other",  # General pathological conditions
+}
+
 
 def normalize_whitespace(text: str) -> str:
     """Convert missing values to empty strings and normalize whitespace."""
@@ -135,6 +151,22 @@ def prepare_medical_dataframe(
         df = df[~df["conditions"].isin(drop_conditions)].reset_index(drop=True)
 
     df["label"] = df["conditions"] - label_offset
+    df["hackathon_classification"] = df["conditions"].map(
+        SOURCE_CONDITION_TO_HACKATHON_CLASS
+    )
+
+    if df["hackathon_classification"].isna().any():
+        unknown_conditions = sorted(
+            df.loc[df["hackathon_classification"].isna(), "conditions"].unique()
+        )
+        raise ValueError(
+            "Found source conditions without a hackathon mapping: "
+            f"{unknown_conditions}"
+        )
+
+    df["hackathon_label"] = df["hackathon_classification"].map(
+        HACKATHON_CLASS_TO_LABEL
+    )
 
     df["raw_text"] = df["full_text"].astype(str)
     df["encoder_text"] = df["full_text"].apply(clean_for_encoder)
@@ -152,6 +184,10 @@ def summarize_medical_dataframe(df: pd.DataFrame) -> dict:
         "rows": len(df),
         "conditions": df["conditions"].value_counts().sort_index().to_dict(),
         "labels": df["label"].value_counts().sort_index().to_dict(),
+        "hackathon_classification": (
+            df["hackathon_classification"].value_counts().sort_index().to_dict()
+        ),
+        "hackathon_labels": df["hackathon_label"].value_counts().sort_index().to_dict(),
         "empty_encoder_text": int((df["encoder_text"] == "").sum()),
         "duplicate_text_rows": int(df.duplicated("encoder_text").sum()),
     }
