@@ -29,4 +29,11 @@ Thumbs.db
 # Notebooks / data
 .ipynb_checkpoints/
 data/raw/
+data/processed/
 *.ckpt
+
+# Model artifacts / outputs
+models/
+reports/
+*.joblib
+submission*.csv
