@@ -1,0 +1,45 @@
+# Quality config: domain-matched encoder for PubMed-style abstracts.
+# Tuned to fit a 4 GB GPU (GTX 1650): fp16 + grad accumulation + frozen lower
+# layers. Expect this to be slow over ~14k abstracts — use single_fold first.
+model_name: microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext
+num_labels: 5
+label_names:
+  - neoplasms
+  - digestive_system_diseases
+  - nervous_system_diseases
+  - cardiovascular_diseases
+  - general_pathological_conditions
+max_length: 256
+
+hidden_dropout_prob: 0.1
+attention_dropout_prob: 0.1
+freeze_embeddings: true
+freeze_layers: 2
+
+learning_rate: 2.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.1
+epochs: 3.0
+train_batch_size: 8
+eval_batch_size: 16
+gradient_accumulation_steps: 2
+fp16: true
+lr_scheduler_type: linear
+
+n_folds: 5
+seed: 2024
+single_fold: false
+
+train_path: data/raw/train.dat
+text_column: text
+label_column: label
+
+output_dir: artifacts/models
+oof_dir: artifacts/oof
+submission_dir: artifacts/submissions
+run_name: pubmedbert
+
+primary_metric: macro_f1
+logging_steps: 100
+eval_steps: 250
+save_total_limit: 1

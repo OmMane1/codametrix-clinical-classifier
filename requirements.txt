@@ -1,0 +1,14 @@
+# Core ML stack for the encoder.
+# IMPORTANT: install a CUDA build of torch separately so it uses your GPU:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# The plain "torch" line below would otherwise pull a CPU-only wheel.
+torch
+transformers>=4.40
+datasets>=2.18
+accelerate>=0.29
+scikit-learn>=1.3
+pandas>=2.0
+numpy>=1.24
+PyYAML>=6.0
+sentencepiece          # required by DeBERTa-v3 tokenizer
+pytest>=7.4            # tests

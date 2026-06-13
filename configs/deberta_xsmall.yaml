@@ -1,0 +1,45 @@
+# Fast config: lightweight generic encoder for quick iteration on a 4 GB GPU.
+# Use this to validate the pipeline end-to-end before committing GPU-hours to
+# PubMedBERT. ~70M params, so a larger batch fits.
+model_name: microsoft/deberta-v3-xsmall
+num_labels: 5
+label_names:
+  - neoplasms
+  - digestive_system_diseases
+  - nervous_system_diseases
+  - cardiovascular_diseases
+  - general_pathological_conditions
+max_length: 256
+
+hidden_dropout_prob: 0.1
+attention_dropout_prob: 0.1
+freeze_embeddings: true
+freeze_layers: 1
+
+learning_rate: 2.0e-5
+weight_decay: 0.01
+warmup_ratio: 0.1
+epochs: 3.0
+train_batch_size: 16
+eval_batch_size: 32
+gradient_accumulation_steps: 1
+fp16: true
+lr_scheduler_type: linear
+
+n_folds: 5
+seed: 2024
+single_fold: false
+
+train_path: data/raw/train.dat
+text_column: text
+label_column: label
+
+output_dir: artifacts/models
+oof_dir: artifacts/oof
+submission_dir: artifacts/submissions
+run_name: deberta_xsmall
+
+primary_metric: macro_f1
+logging_steps: 100
+eval_steps: 250
+save_total_limit: 1
