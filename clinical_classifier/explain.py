@@ -95,31 +95,53 @@ def _shade(c, maxabs):
     return f"rgba({rgb},{a:.2f})"
 
 
-def render_html(model, text):
-    """Standalone HTML: the note with words shaded by contribution (no deps)."""
+REVIEW_THRESHOLD = 0.60  # below this top-class confidence -> route to a human
+
+
+def highlight_html(model, text):
+    """Return (pred, proba, contrib, highlighted_paragraph_html)."""
     import html
     import re
 
     pred, proba, contrib = token_contributions(model, text)
     maxabs = max((abs(v) for v in contrib.values()), default=1.0)
-
     out = []
     for tok in re.split(r"(\s+)", text):
         if tok.strip() == "":
             out.append(tok)
             continue
-        words = re.findall(r"[a-z]{2,}", tok.lower())
-        c = sum(contrib.get(w, 0.0) for w in words)
+        c = sum(contrib.get(w, 0.0) for w in re.findall(r"[a-z]{2,}", tok.lower()))
         out.append(f'<span style="background:{_shade(c, maxabs)};border-radius:3px;padding:0 1px" '
                    f'title="{c:+.3f}">{html.escape(tok)}</span>')
+    return pred, proba, contrib, "".join(out)
+
+
+def routing_badge(pred, conf, threshold=REVIEW_THRESHOLD):
+    """The deployment decision: auto-route vs flag for human review."""
+    if conf >= threshold:
+        return (f'<div style="background:#dafbe1;border:1px solid #2ea043;border-radius:6px;'
+                f'padding:8px 12px;font-family:system-ui;font-weight:600">'
+                f'✅ Auto-route → {pred} <span style="font-weight:400;color:#555">'
+                f'({conf:.0%} confidence)</span></div>')
+    return (f'<div style="background:#fff8c5;border:1px solid #d4a72c;border-radius:6px;'
+            f'padding:8px 12px;font-family:system-ui;font-weight:600">'
+            f'⚠️ Flag for human review <span style="font-weight:400;color:#555">'
+            f'(top guess {pred}, only {conf:.0%} confidence — below {threshold:.0%})</span></div>')
+
+
+def render_html(model, text, threshold=REVIEW_THRESHOLD):
+    """Standalone HTML block: routing decision, confidence bars, highlighted note."""
+    pred, proba, _, body = highlight_html(model, text)
+    conf = max(proba.values())
     bars = "".join(
-        f'<div style="margin:2px 0"><span style="display:inline-block;width:130px">{c}</span>'
-        f'<span style="display:inline-block;height:12px;width:{int(p*240)}px;background:#2ea043"></span>'
-        f' {p:.1%}</div>' for c, p in proba.items())
-    return (f'<div style="font-family:system-ui,sans-serif;max-width:820px;margin:16px">'
-            f'<h2 style="margin-bottom:4px">Predicted: {pred}</h2>'
-            f'<div style="color:#555;font-size:13px;margin-bottom:12px">{bars}</div>'
-            f'<p style="line-height:2;font-size:15px">{"".join(out)}</p>'
+        f'<div style="margin:2px 0;font-size:13px"><span style="display:inline-block;width:130px">{c}</span>'
+        f'<span style="display:inline-block;height:12px;width:{int(p*240)}px;background:#2ea043;'
+        f'vertical-align:middle"></span> {p:.0%}</div>' for c, p in proba.items())
+    return (f'<div style="font-family:system-ui,sans-serif;max-width:820px;margin:16px 0">'
+            f'{routing_badge(pred, conf, threshold)}'
+            f'<div style="color:#555;margin:12px 0">{bars}</div>'
+            f'<p style="line-height:2;font-size:15px;background:#fff;padding:10px;'
+            f'border:1px solid #eee;border-radius:6px">{body}</p>'
             f'<p style="color:#999;font-size:12px">Green = supports the prediction, '
             f'red = argues against. Hover a word for its exact weight.</p></div>')
 
